@@ -189,7 +189,7 @@ calculate_data_costs(mve::TriangleMesh::ConstPtr mesh, std::vector<TextureView> 
                 math::Vec3f view_to_face_vec = (face_center - view_pos).normalized();
                 math::Vec3f face_to_view_vec = (view_pos - face_center).normalized();
 
-                /* Backface culling */
+                /* Backface and basic frustum culling */
                 float viewing_angle = face_to_view_vec.dot(face_normal);
                 if (viewing_angle < 0.0f || viewing_direction.dot(view_to_face_vec) < 0.0f)
                     continue;
@@ -305,8 +305,7 @@ calculate_data_costs(mve::TriangleMesh::ConstPtr mesh, std::vector<TextureView> 
         }
 
         /* Ensure that all memory is freeed. */
-        projected_face_infos[i].clear();
-        projected_face_infos[i].shrink_to_fit();
+        projected_face_infos[i] = std::vector<ProjectedFaceInfo>();
     }
 
     std::cout << "\tMaximum quality of a face within an image: " << max_quality << std::endl;

@@ -18,14 +18,14 @@ TEX_NAMESPACE_BEGIN
 #define STRIP_SIZE 20
 
 math::Vec3f
-mean_color_of_edge_point(std::vector<ProjectedEdgeInfo> projected_edge_infos,
-    std::vector<TexturePatch::ConstPtr> const & texture_patches, float t) {
+mean_color_of_edge_point(std::vector<ProjectedEdgeInfo> const & projected_edge_infos,
+    std::vector<TexturePatch::Ptr> const & texture_patches, float t) {
 
     assert(0.0f <= t && t <= 1.0f);
     math::Accum<math::Vec3f> color_accum(math::Vec3f(0.0f));
 
     for (ProjectedEdgeInfo const & projected_edge_info : projected_edge_infos) {
-        TexturePatch::ConstPtr texture_patch = texture_patches[projected_edge_info.texture_patch_id];
+        TexturePatch::Ptr texture_patch = texture_patches[projected_edge_info.texture_patch_id];
         if (texture_patch->get_label() == 0) continue;
         math::Vec2f pixel = projected_edge_info.p1 * t + (1.0f - t) * projected_edge_info.p2;
         math::Vec3f color = texture_patch->get_pixel_value(pixel);
@@ -37,8 +37,8 @@ mean_color_of_edge_point(std::vector<ProjectedEdgeInfo> projected_edge_infos,
 }
 
 void
-draw_line(math::Vec2f p1, math::Vec2f p2, std::vector<ProjectedEdgeInfo> const & projected_edge_infos,
-    std::vector<TexturePatch::ConstPtr> const & texture_patches, TexturePatch::Ptr texture_patch) {
+draw_line(math::Vec2f p1, math::Vec2f p2,
+    std::vector<math::Vec3f> const & edge_color, TexturePatch::Ptr texture_patch) {
     /* http://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm */
 
     int x0 = std::floor(p1[0] + 0.5f);
@@ -65,9 +65,17 @@ draw_line(math::Vec2f p1, math::Vec2f p2, std::vector<ProjectedEdgeInfo> const &
         tdy = static_cast<float>(y1 - y);
 
         /* If the length is zero we sample the midpoint of the projected edge. */
-        float t = length != 0.0f ? std::sqrt(tdx * tdx + tdy * tdy) / length : 0.5f;
+        float t = (length != 0.0f) ? std::sqrt(tdx * tdx + tdy * tdy) / length : 0.5f;
 
-        texture_patch->set_pixel_value(pixel, mean_color_of_edge_point(projected_edge_infos, texture_patches, t));
+        math::Vec3f color;
+        if (t < 1.0f && edge_color.size() > 1) {
+            std::size_t idx = std::floor(t * (edge_color.size() - 1));
+            color = (1.0f - t) * edge_color[idx] + t * edge_color[idx + 1];
+        } else {
+            color = edge_color.back();
+        }
+
+        texture_patch->set_pixel_value(pixel, color);
         if (x == x1 && y == y1)
             break;
 
@@ -83,54 +91,83 @@ draw_line(math::Vec2f p1, math::Vec2f p2, std::vector<ProjectedEdgeInfo> const &
     }
 }
 
+struct Pixel {
+    math::Vec2i pos;
+    math::Vec3f const * color;
+};
+
+struct Line {
+    math::Vec2i from;
+    math::Vec2i to;
+    std::vector<math::Vec3f> const * color;
+};
+
 void
 local_seam_leveling(UniGraph const & graph, mve::TriangleMesh::ConstPtr mesh,
     VertexProjectionInfos const & vertex_projection_infos,
     std::vector<TexturePatch::Ptr> * texture_patches) {
 
-    //TODO huge waste of memory...
-    std::vector<TexturePatch::ConstPtr> orig_texture_patches(texture_patches->size());
-    for (std::size_t i = 0; i < orig_texture_patches.size(); ++i) {
-        orig_texture_patches[i] = texture_patches->at(i)->duplicate();
-    }
-
     std::size_t const num_vertices = vertex_projection_infos.size();
+    std::vector<math::Vec3f> vertex_colors(num_vertices);
+    std::vector<std::vector<math::Vec3f> > edge_colors;
 
+    std::vector<std::vector<ProjectedEdgeInfo> > projected_edge_infos;
     {
         std::vector<MeshEdge> seam_edges;
         find_seam_edges(graph, mesh, &seam_edges);
-
-        for (MeshEdge seam_edge : seam_edges){
-            std::vector<ProjectedEdgeInfo> projected_edge_infos;
-            find_mesh_edge_projections(vertex_projection_infos, seam_edge, &projected_edge_infos);
-
-            for (ProjectedEdgeInfo const & projected_edge_info : projected_edge_infos) {
-                draw_line(projected_edge_info.p1, projected_edge_info.p2, projected_edge_infos,
-                    orig_texture_patches, texture_patches->at(projected_edge_info.texture_patch_id));
-            }
+        edge_colors.resize(seam_edges.size());
+        projected_edge_infos.resize(seam_edges.size());
+        for (std::size_t i = 0; i < seam_edges.size(); ++i) {
+            MeshEdge const & seam_edge = seam_edges[i];
+            find_mesh_edge_projections(vertex_projection_infos, seam_edge,
+                &projected_edge_infos[i]);
         }
     }
 
-    for (std::size_t i = 0; i < num_vertices; ++i) {
-        std::vector<VertexProjectionInfo> const & projection_infos = vertex_projection_infos[i];
-        if (projection_infos.size() <= 1) continue;
-
-        math::Accum<math::Vec3f> color_accum(math::Vec3f(0.0f));
-        for (std::size_t j = 0; j < projection_infos.size(); ++j) {
-            VertexProjectionInfo const & projection_info = projection_infos[j];
-            TexturePatch::ConstPtr original_texture_patch = orig_texture_patches[projection_info.texture_patch_id];
-            if (original_texture_patch->get_label() == 0) continue;
-            math::Vec3f color = original_texture_patch->get_pixel_value(projection_info.projection);
-            color_accum.add(color, 1.0f);
+    std::vector<std::vector<Line> > lines(texture_patches->size());
+    std::vector<std::vector<Pixel> > pixels(texture_patches->size());
+    /* Sample edge colors. */
+    for (std::size_t i = 0; i < projected_edge_infos.size(); ++i) {
+        float max_length = 0;
+        for (ProjectedEdgeInfo const & projected_edge_info : projected_edge_infos[i]) {
+            float length = (projected_edge_info.p1 - projected_edge_info.p2).norm();
+            max_length = std::max(max_length, length);
         }
 
-        math::Vec3f mean_color = color_accum.normalized();
+        std::vector<math::Vec3f> & edge_color = edge_colors[i];
+        edge_color.resize(std::ceil(max_length * 2.0f));
+        for (std::size_t j = 0; j < edge_color.size(); ++j) {
+            float t = static_cast<float>(j) / (edge_color.size() - 1);
+            edge_color[j] = mean_color_of_edge_point(projected_edge_infos[i], *texture_patches, t);
+        }
 
-        for (std::size_t j = 0; j < projection_infos.size(); ++j){
-            VertexProjectionInfo const & projection_info = projection_infos[j];
-            math::Vec2i pixel(projection_info.projection +  math::Vec2f(0.5f, 0.5f));
+        for (ProjectedEdgeInfo const & projected_edge_info : projected_edge_infos[i]) {
+            Line line;
+            line.from = projected_edge_info.p1;
+            line.to = projected_edge_info.p2;
+            line.color = &edge_colors[i];
+            lines[projected_edge_info.texture_patch_id].push_back(line);
+        }
+    }
+
+    /* Sample vertex colors. */
+    for (std::size_t i = 0; i < vertex_colors.size(); ++i) {
+        std::vector<VertexProjectionInfo> const & projection_infos = vertex_projection_infos[i];
+
+        math::Accum<math::Vec3f> color_accum(math::Vec3f(0.0f));
+        for (VertexProjectionInfo const & projection_info : projection_infos) {
             TexturePatch::Ptr texture_patch = texture_patches->at(projection_info.texture_patch_id);
-            texture_patch->set_pixel_value(pixel, mean_color);
+            if (texture_patch->get_label() == 0) continue;
+            math::Vec3f color = texture_patch->get_pixel_value(projection_info.projection);
+            color_accum.add(color, 1.0f);
+        }
+        vertex_colors[i] = color_accum.normalized();
+
+        for (VertexProjectionInfo const & projection_info : projection_infos) {
+            Pixel pixel;
+            pixel.pos = math::Vec2i(projection_info.projection +  math::Vec2f(0.5f, 0.5f));
+            pixel.color = &vertex_colors[i];
+            pixels[projection_info.texture_patch_id].push_back(pixel);
         }
     }
 
@@ -138,14 +175,24 @@ local_seam_leveling(UniGraph const & graph, mve::TriangleMesh::ConstPtr mesh,
     #pragma omp parallel for schedule(dynamic)
     for (std::size_t i = 0; i < texture_patches->size(); ++i) {
         TexturePatch::Ptr texture_patch = texture_patches->at(i);
+        mve::FloatImage::Ptr image = texture_patch->get_image()->duplicate();
+
+        /* Apply colors. */
+        for (Pixel const & pixel : pixels[i]) {
+            texture_patch->set_pixel_value(pixel.pos, *pixel.color);
+        }
+
+        for (Line const & line : lines[i]) {
+            draw_line(line.from, line.to, *line.color, texture_patch);
+        }
+
         texture_patch_counter.progress<SIMPLE>();
 
         /* Only alter a small strip of texture patches originating from input images. */
         if (texture_patch->get_label() != 0) {
             texture_patch->prepare_blending_mask(STRIP_SIZE);
         }
-
-        texture_patch->blend(orig_texture_patches[i]->get_image());
+        texture_patch->blend(image);
         texture_patch->release_blending_mask();
         texture_patch_counter.inc();
     }

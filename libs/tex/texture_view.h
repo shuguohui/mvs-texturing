@@ -15,6 +15,7 @@
 
 #include <math/vector.h>
 #include <mve/camera.h>
+#include <mve/image.h>
 
 #include "tri.h"
 #include "settings.h"
@@ -184,8 +185,7 @@ TextureView::bind_image(mve::ByteImage::Ptr new_image) {
 inline void
 TextureView::release_validity_mask(void) {
     assert(validity_mask.size() == static_cast<std::size_t>(width * height));
-    validity_mask.clear();
-    validity_mask.shrink_to_fit();
+    validity_mask = std::vector<bool>();
 }
 
 inline void
@@ -201,5 +201,3 @@ TextureView::release_image(void) {
 }
 
 #endif /* TEX_TEXTUREVIEW_HEADER */
-
-
