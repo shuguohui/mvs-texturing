@@ -25,6 +25,9 @@
 #include "arguments.h"
 
 int main(int argc, char **argv) {
+    util::system::print_build_timestamp(argv[0]);
+    util::system::register_segfault_handler();
+
 #ifdef RESEARCH
     std::cout << "******************************************************************************" << std::endl
               << " Due to use of the -DRESEARCH=ON compile option, this program is licensed "     << std::endl
@@ -32,11 +35,7 @@ int main(int argc, char **argv) {
               << "******************************************************************************" << std::endl;
 #endif
 
-    util::system::register_segfault_handler();
-
     Timer timer;
-    timer.measure("Start");
-
     util::WallTimer wtimer;
 
     Arguments conf;
@@ -60,10 +59,8 @@ int main(int argc, char **argv) {
         std::cerr << "\tCould not load mesh: "<< e.what() << std::endl;
         std::exit(EXIT_FAILURE);
     }
-    mve::VertexInfoList::Ptr vertex_infos = mve::VertexInfoList::create(mesh);
-    tex::prepare_mesh(vertex_infos, mesh);
-
-    std::size_t const num_faces = mesh->get_faces().size() / 3;
+    mve::MeshInfo mesh_info(mesh);
+    tex::prepare_mesh(&mesh_info, mesh);
 
     std::cout << "Generating texture views: " << std::endl;
     tex::TextureViews texture_views;
@@ -72,15 +69,16 @@ int main(int argc, char **argv) {
     write_string_to_file(conf.out_prefix + ".conf", conf.to_string());
     timer.measure("Loading");
 
+    std::size_t const num_faces = mesh->get_faces().size() / 3;
+
     std::cout << "Building adjacency graph: " << std::endl;
     tex::Graph graph(num_faces);
-    tex::build_adjacency_graph(mesh, vertex_infos, &graph);
+    tex::build_adjacency_graph(mesh, mesh_info, &graph);
 
-    wtimer.reset();
     if (conf.labeling_file.empty()) {
         std::cout << "View selection:" << std::endl;
+        util::WallTimer rwtimer;
 
-        std::size_t const num_faces = mesh->get_faces().size() / 3;
         tex::DataCosts data_costs(num_faces, texture_views.size());
         if (conf.data_cost_file.empty()) {
             tex::calculate_data_costs(mesh, &texture_views, conf.settings, &data_costs);
@@ -105,6 +103,7 @@ int main(int argc, char **argv) {
 
         tex::view_selection(data_costs, &graph, conf.settings);
         timer.measure("Running MRF optimization");
+        std::cout << "\tTook: " << rwtimer.get_elapsed_sec() << "s" << std::endl;
 
         /* Write labeling to file. */
         if (conf.write_intermediate_results) {
@@ -136,7 +135,6 @@ int main(int argc, char **argv) {
 
         std::cout << "done." << std::endl;
     }
-    std::cout << "\tTook: " << wtimer.get_elapsed_sec() << "s" << std::endl;
 
     tex::TextureAtlases texture_atlases;
     {
@@ -144,11 +142,12 @@ int main(int argc, char **argv) {
         tex::TexturePatches texture_patches;
         tex::VertexProjectionInfos vertex_projection_infos;
         std::cout << "Generating texture patches:" << std::endl;
-        tex::generate_texture_patches(graph, mesh, vertex_infos, &texture_views, &vertex_projection_infos, &texture_patches);
+        tex::generate_texture_patches(graph, mesh, mesh_info, &texture_views,
+            conf.settings, &vertex_projection_infos, &texture_patches);
 
         if (conf.settings.global_seam_leveling) {
             std::cout << "Running global seam leveling:" << std::endl;
-            tex::global_seam_leveling(graph, mesh, vertex_infos, vertex_projection_infos, &texture_patches);
+            tex::global_seam_leveling(graph, mesh, mesh_info, vertex_projection_infos, &texture_patches);
             timer.measure("Running global seam leveling");
         } else {
             ProgressCounter texture_patch_counter("Calculating validity masks for texture patches", texture_patches.size());
@@ -200,7 +199,8 @@ int main(int argc, char **argv) {
             tex::TexturePatches texture_patches;
             generate_debug_embeddings(&texture_views);
             tex::VertexProjectionInfos vertex_projection_infos; // Will only be written
-            tex::generate_texture_patches(graph, mesh, vertex_infos, &texture_views, &vertex_projection_infos, &texture_patches);
+            tex::generate_texture_patches(graph, mesh, mesh_info, &texture_views,
+                conf.settings, &vertex_projection_infos, &texture_patches);
             tex::generate_texture_atlases(&texture_patches, &texture_atlases);
         }
 
@@ -213,4 +213,6 @@ int main(int argc, char **argv) {
             std::cout << "done." << std::endl;
         }
     }
+
+    return EXIT_SUCCESS;
 }

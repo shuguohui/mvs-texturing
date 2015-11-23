@@ -46,20 +46,20 @@ typedef std::vector<std::vector<VertexProjectionInfo> > VertexProjectionInfos;
   *  -ensures normals (face and vertex)
   */
 void
-prepare_mesh(mve::VertexInfoList::Ptr vertex_infos, mve::TriangleMesh::Ptr mesh);
+prepare_mesh(mve::MeshInfo * mesh_info, mve::TriangleMesh::Ptr mesh);
 
 /**
   * Generates TextureViews from the in_scene.
   */
 void
-generate_texture_views(std::string in_scene, TextureViews * texture_views);
+generate_texture_views(std::string const & in_scene, TextureViews * texture_views);
 
 /**
   * Builds up the meshes face adjacency graph using the vertex_infos
   */
 void
 build_adjacency_graph(mve::TriangleMesh::ConstPtr mesh,
-    mve::VertexInfoList::ConstPtr vertex_infos, UniGraph * graph);
+    mve::MeshInfo const & mesh_info, UniGraph * graph);
 
 /**
  * Calculates the data costs for each face and texture view combination,
@@ -80,8 +80,9 @@ view_selection(ST const & data_costs, UniGraph * graph, Settings const & setting
   */
 void generate_texture_patches(UniGraph const & graph,
     mve::TriangleMesh::ConstPtr mesh,
-    mve::VertexInfoList::ConstPtr vertex_infos,
+    mve::MeshInfo const & mesh_info,
     TextureViews * texture_views,
+    Settings const & settings,
     VertexProjectionInfos * vertex_projection_infos,
     TexturePatches * texture_patches);
 
@@ -91,7 +92,7 @@ void generate_texture_patches(UniGraph const & graph,
   */
 void
 global_seam_leveling(UniGraph const & graph, mve::TriangleMesh::ConstPtr mesh,
-    mve::VertexInfoList::ConstPtr vertex_infos,
+    mve::MeshInfo const & mesh_info,
     VertexProjectionInfos const & vertex_projection_infos,
     TexturePatches * texture_patches);
 

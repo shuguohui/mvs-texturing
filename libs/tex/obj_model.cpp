@@ -7,6 +7,7 @@
  * of the BSD 3-Clause license. See the LICENSE.txt file for details.
  */
 
+#include <iomanip>
 #include <fstream>
 #include <cstring>
 #include <cerrno>
@@ -18,8 +19,6 @@
 #include "obj_model.h"
 
 #define OBJ_INDEX_OFFSET 1
-
-ObjModel::ObjModel() {}
 
 void
 ObjModel::save(ObjModel const & model, std::string const & prefix) {
